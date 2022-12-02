@@ -10,8 +10,10 @@ import androidx.compose.ui.Modifier
 import by.coolightman.qrscanner.ui.theme.QRScannerTheme
 
 class MainActivity : ComponentActivity() {
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         setContent {
             QRScannerTheme {
                 Surface(
