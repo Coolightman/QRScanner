@@ -1,24 +1,21 @@
 package by.coolightman.qrscanner
 
-import android.content.pm.PackageManager
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
-import android.util.Size
+import android.provider.Settings
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST
-import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.view.PreviewView
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.Button
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Surface
 import androidx.compose.material.Text
@@ -28,21 +25,25 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.content.ContextCompat
+import by.coolightman.qrscanner.component.AppCameraView
 import by.coolightman.qrscanner.ui.theme.QRScannerTheme
+import com.google.accompanist.permissions.ExperimentalPermissionsApi
+import com.google.accompanist.permissions.isGranted
+import com.google.accompanist.permissions.rememberPermissionState
+import com.google.accompanist.permissions.shouldShowRationale
 import com.google.accompanist.systemuicontroller.rememberSystemUiController
 
 class MainActivity : ComponentActivity() {
 
+    @OptIn(ExperimentalPermissionsApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -55,17 +56,24 @@ class MainActivity : ComponentActivity() {
 
                 SideEffect {
                     systemUiController.setSystemBarsColor(
-                        color = barsColor,
-                        darkIcons = false
+                        color = barsColor, darkIcons = false
                     )
                 }
                 Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colors.background
+                    modifier = Modifier.fillMaxSize(), color = MaterialTheme.colors.background
                 ) {
                     val context = LocalContext.current
-                    val lifecycleOwner = LocalLifecycleOwner.current
                     val clipboardManager = LocalClipboardManager.current
+
+                    val cameraProviderFuture = remember {
+                        ProcessCameraProvider.getInstance(context)
+                    }
+
+                    val cameraPermissionState =
+                        rememberPermissionState(permission = android.Manifest.permission.CAMERA)
+                    LaunchedEffect(Unit) {
+                        cameraPermissionState.launchPermissionRequest()
+                    }
 
                     var code by remember {
                         mutableStateOf("")
@@ -74,67 +82,15 @@ class MainActivity : ComponentActivity() {
                         clipboardManager.setText(AnnotatedString(code))
                     }
 
-                    val cameraProviderFuture = remember {
-                        ProcessCameraProvider.getInstance(context)
-                    }
-
-                    var hasCameraPermission by remember {
-                        mutableStateOf(
-                            ContextCompat.checkSelfPermission(
-                                context,
-                                android.Manifest.permission.CAMERA
-                            ) == PackageManager.PERMISSION_GRANTED
-                        )
-                    }
-                    val launcher = rememberLauncherForActivityResult(
-                        contract = ActivityResultContracts.RequestPermission(),
-                        onResult = { granted ->
-                            hasCameraPermission = granted
-                        }
-                    )
-                    LaunchedEffect(Unit) {
-                        launcher.launch(android.Manifest.permission.CAMERA)
-                    }
-
                     Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
                         modifier = Modifier.fillMaxSize()
                     ) {
-                        if (hasCameraPermission) {
-                            AndroidView(
-                                factory = { context ->
-                                    val previewView = PreviewView(context)
-                                    val preview = Preview.Builder().build()
-                                    val selector = CameraSelector.Builder()
-                                        .requireLensFacing(CameraSelector.LENS_FACING_BACK)
-                                        .build()
-                                    preview.setSurfaceProvider(previewView.surfaceProvider)
-                                    val imageAnalysis = ImageAnalysis.Builder()
-                                        .setTargetResolution(
-                                            Size(1280, 720)
-                                        )
-                                        .setBackpressureStrategy(STRATEGY_KEEP_ONLY_LATEST)
-                                        .build()
-
-                                    imageAnalysis.setAnalyzer(
-                                        ContextCompat.getMainExecutor(context),
-                                        QrCodeAnalyzer { result ->
-                                            code = result
-                                        }
-                                    )
-                                    try {
-                                        cameraProviderFuture.get().bindToLifecycle(
-                                            lifecycleOwner,
-                                            selector,
-                                            preview,
-                                            imageAnalysis
-                                        )
-                                    } catch (e: Exception) {
-                                        e.printStackTrace()
-                                    }
-
-                                    previewView
-                                },
-                                modifier = Modifier.weight(1f)
+                        if (cameraPermissionState.status.isGranted) {
+                            AppCameraView(
+                                cameraProviderFuture = cameraProviderFuture,
+                                onGetResult = { code = it }
                             )
                             SelectionContainer {
                                 Text(
@@ -145,6 +101,48 @@ class MainActivity : ComponentActivity() {
                                         .fillMaxWidth()
                                         .padding(12.dp)
                                 )
+                            }
+                        } else {
+                            if (cameraPermissionState.status.shouldShowRationale) {
+                                Text(
+                                    text = "QR-code can't work without this permission.\n" +
+                                            "Please grant the permission",
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp)
+                                )
+
+                                Button(
+                                    shape = CircleShape,
+                                    onClick = { cameraPermissionState.launchPermissionRequest() },
+                                ) {
+                                    Text(text = "Request permission")
+                                }
+
+                            } else {
+                                Text(
+                                    text = "Sorry, but QR-code can't work without this permission.\n" +
+                                            "You can change the permission in settings",
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp)
+                                )
+
+                                Button(
+                                    shape = CircleShape,
+                                    onClick = {
+                                        startActivity(
+                                            Intent(
+                                                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                                Uri.parse("package:" + BuildConfig.APPLICATION_ID)
+                                            )
+                                        )
+                                    },
+                                ) {
+                                    Text(text = "Settings")
+                                }
                             }
                         }
                     }
